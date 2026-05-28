@@ -4,6 +4,7 @@ from pypdf import PdfReader
 import json
 import sys
 import os
+import numpy as np
 
 load_dotenv("openai.env")      # reads the .env file
 client = OpenAI()  # automatically uses OPENAI_API_KEY
@@ -13,16 +14,24 @@ pdf_path = os.path.join("papers", paper_name + ".pdf")
 reader = PdfReader(pdf_path)
 paper_text = " ".join(page.extract_text() or "" for page in reader.pages)
 
-keywords = ["dataset", "datasets", "train", "test", "split", "samples", "metric", "evaluation", "report"]
-
-# Split into sentence-level chunks and keep only those containing a keyword
 chunks = [s.strip() for s in paper_text.split(".") if s.strip()]
-relevant_chunks = [
-    chunk for chunk in chunks
-    if any(word.lower() in chunk.lower() for word in keywords)
-]
 
-retrieved_text = ". ".join(relevant_chunks)
+query = "datasets used, number of training samples, number of test samples, evaluation metrics, experimental results"
+
+def embed(texts):
+    response = client.embeddings.create(input=texts, model="text-embedding-3-small")
+    return np.array([item.embedding for item in response.data])
+
+chunk_embeddings = embed(chunks)
+query_embedding = embed([query])[0]
+
+# Cosine similarity: dot product of unit vectors
+norms = np.linalg.norm(chunk_embeddings, axis=1, keepdims=True)
+scores = (chunk_embeddings / norms) @ (query_embedding / np.linalg.norm(query_embedding))
+
+top_indices = np.argsort(scores)[::-1][:20]
+top_indices_ordered = sorted(top_indices)  # preserve document order
+retrieved_text = ". ".join(chunks[i] for i in top_indices_ordered)
 
 response = client.responses.create(
     model="gpt-5.4-nano",
