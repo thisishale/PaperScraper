@@ -3,11 +3,13 @@ from openai import OpenAI
 from pypdf import PdfReader
 import json
 import sys
+import os
 
 load_dotenv("openai.env")      # reads the .env file
 client = OpenAI()  # automatically uses OPENAI_API_KEY
 
-pdf_path = sys.argv[1] if len(sys.argv) > 1 else "paper.pdf"
+paper_name = sys.argv[1] if len(sys.argv) > 1 else "paper"
+pdf_path = os.path.join("papers", paper_name + ".pdf")
 reader = PdfReader(pdf_path)
 paper_text = " ".join(page.extract_text() or "" for page in reader.pages)
 
@@ -46,5 +48,8 @@ Text:
 result = json.loads(response.output_text)
 print(result)
 
-
-# print(response.output_text)
+os.makedirs("results", exist_ok=True)
+output_path = os.path.join("results", paper_name + "_results.json")
+with open(output_path, "w") as f:
+    json.dump(result, f, indent=2)
+print(f"Saved to {output_path}")
