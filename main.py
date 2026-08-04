@@ -32,21 +32,38 @@ def extract(pdf_path):
         model="gpt-5.4-nano",
         instructions="""
 You extract experimental details from research papers.
-Return only valid JSON.
-Do not add explanations.
 """,
         input=f"""
 Extract the datasets, train/test sample counts, and evaluation metrics from the text below.
 
 If train/test sample counts are not explicitly reported, write "not reported".
 
-Do not report additional explanations.
-
-Json dict keys should only be: datasets, train_sample_count, test_sample_count, metrics
-
 Text:
 {retrieved_text}
-"""
+""",
+        text={
+            "format": {
+                "type": "json_schema",
+                "name": "experiment_details",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "datasets": {"type": "string"},
+                        "train_sample_count": {"type": "string"},
+                        "test_sample_count": {"type": "string"},
+                        "metrics": {"type": "string"},
+                    },
+                    "required": [
+                        "datasets",
+                        "train_sample_count",
+                        "test_sample_count",
+                        "metrics",
+                    ],
+                    "additionalProperties": False,
+                },
+            }
+        },
     )
     return json.loads(response.output_text)
 
