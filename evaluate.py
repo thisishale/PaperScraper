@@ -70,8 +70,8 @@ Give a one-sentence reason.
 
 
 def evaluate_paper(paper_name):
-    gt_path = os.path.join("groundtruth", paper_name + "_groundtruth.json")
-    pred_path = os.path.join("results", paper_name + "_results.json")
+    gt_path = os.path.join("groundtruth", paper_name + ".json")
+    pred_path = os.path.join("results", paper_name + ".json")
 
     with open(gt_path) as f:
         ground_truth = json.load(f)
@@ -97,7 +97,7 @@ def evaluate_paper(paper_name):
 
 
 def paper_names_with_ground_truth():
-    suffix = "_groundtruth.json"
+    suffix = ".json"
     return [
         f[: -len(suffix)]
         for f in os.listdir("groundtruth")
