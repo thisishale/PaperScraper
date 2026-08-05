@@ -102,8 +102,6 @@ def flatten(value):
         return ", ".join(str(v) for v in value)
     return value
 
-# temporary #TODO [LLM-1] : Fix later
-paper_names = paper_names[18:]
 
 # --overwrite-summary starts summary.json over from scratch, using only
 # what this run processes. Default (unset) merges into the existing file --

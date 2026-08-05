@@ -69,9 +69,19 @@ Give a one-sentence reason.
     return json.loads(response.output_text)
 
 
+def to_text(value):
+    # main.py has no schema enforcement, so a field can come back as a
+    # string, a list (join it), or missing/null (treat as "not reported").
+    if value is None:
+        return "not reported"
+    if isinstance(value, list):
+        return "; ".join(str(v) for v in value)
+    return str(value)
+
+
 def evaluate_paper(paper_name):
     gt_path = os.path.join("groundtruth", paper_name + ".json")
-    pred_path = os.path.join("results", paper_name + ".json")
+    pred_path = os.path.join("results", paper_name + "_results.json")
 
     with open(gt_path) as f:
         ground_truth = json.load(f)
@@ -80,8 +90,8 @@ def evaluate_paper(paper_name):
 
     field_scores = {}
     for field in FIELDS:
-        gt_value = ground_truth[field]["value"]
-        pred_value = predicted[field]["value"]
+        gt_value = to_text(ground_truth[field]["value"])
+        pred_value = to_text(predicted[field])
 
         judgment = llm_judge(field, pred_value, gt_value)
 
@@ -131,21 +141,29 @@ def main():
         print("No ground-truth files found in groundtruth/. Nothing to evaluate.")
         return
 
+    os.makedirs("eval_reports", exist_ok=True)
+
     report = {}
     for paper_name in paper_names:
         print(f"Evaluating {paper_name}...")
-        report[paper_name] = evaluate_paper(paper_name)
+        field_scores = evaluate_paper(paper_name)
+        report[paper_name] = field_scores
+
+        paper_report_path = os.path.join("eval_reports", paper_name + ".json")
+        with open(paper_report_path, "w") as f:
+            json.dump(field_scores, f, indent=2)
+        print(f"  Saved {paper_report_path}")
 
     summary = summarize(report)
 
     os.makedirs("results", exist_ok=True)
-    output_path = os.path.join("results", "eval_report.json")
-    with open(output_path, "w") as f:
-        json.dump({"summary": summary, "per_paper": report}, f, indent=2)
+    summary_path = os.path.join("results", "eval_summary.json")
+    with open(summary_path, "w") as f:
+        json.dump(summary, f, indent=2)
 
     print("\n=== Evaluation Summary ===")
     print(json.dumps(summary, indent=2))
-    print(f"\nFull report saved to {output_path}")
+    print(f"\nPer-paper reports saved to eval_reports/, summary saved to {summary_path}")
 
 
 if __name__ == "__main__":
