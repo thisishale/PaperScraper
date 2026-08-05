@@ -83,9 +83,9 @@ def evaluate_paper(paper_name):
     gt_path = os.path.join("groundtruth", paper_name + ".json")
     pred_path = os.path.join("results", paper_name + "_results.json")
 
-    with open(gt_path) as f:
+    with open(gt_path, encoding="utf-8") as f:
         ground_truth = json.load(f)
-    with open(pred_path) as f:
+    with open(pred_path, encoding="utf-8") as f:
         predicted = json.load(f)
 
     field_scores = {}
@@ -150,7 +150,7 @@ def main():
         report[paper_name] = field_scores
 
         paper_report_path = os.path.join("eval_reports", paper_name + ".json")
-        with open(paper_report_path, "w") as f:
+        with open(paper_report_path, "w", encoding="utf-8") as f:
             json.dump(field_scores, f, indent=2)
         print(f"  Saved {paper_report_path}")
 
@@ -158,7 +158,7 @@ def main():
 
     os.makedirs("results", exist_ok=True)
     summary_path = os.path.join("results", "eval_summary.json")
-    with open(summary_path, "w") as f:
+    with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
     print("\n=== Evaluation Summary ===")
