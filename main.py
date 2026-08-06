@@ -128,8 +128,13 @@ Text:
     result = json.loads(response.output_text)
 
     # Look up the actual chunk text for each citation ourselves, rather than
-    # trusting the model to reproduce quotes verbatim.
+    # trusting the model to reproduce quotes verbatim. The model can
+    # hallucinate an id it wasn't actually shown (e.g. guessing a sequential
+    # position instead of using the real tag), so drop anything outside the
+    # set of chunks that were actually retrieved rather than crashing.
+    retrieved_ids = set(top_indices)
     for field in result.values():
+        field["source_chunk_ids"] = [i for i in field["source_chunk_ids"] if i in retrieved_ids]
         field["source_chunks"] = [chunks[i] for i in field["source_chunk_ids"]]
 
     return result
