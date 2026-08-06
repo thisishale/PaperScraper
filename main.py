@@ -67,29 +67,72 @@ def extract(pdf_path):
     norms = np.linalg.norm(chunk_embeddings, axis=1, keepdims=True)
     scores = (chunk_embeddings / norms) @ (query_embedding / np.linalg.norm(query_embedding))
     top_indices = sorted(np.argsort(scores)[::-1][:20])
-    retrieved_text = ". ".join(chunks[i] for i in top_indices)
+    retrieved_text = "\n".join(f"[{i}] {chunks[i]}" for i in top_indices)
+
+    # Each field gets its own value plus the id(s) of the chunk(s) it was
+    # extracted from, so the answer can be checked against the source text.
+    field_schema = {
+        "type": "object",
+        "properties": {
+            "value": {"type": "string"},
+            "source_chunk_ids": {
+                "type": "array",
+                "items": {"type": "integer"},
+            },
+        },
+        "required": ["value", "source_chunk_ids"],
+        "additionalProperties": False,
+    }
 
     response = client.responses.create(
         model="gpt-5.4-nano",
         instructions="""
 You extract experimental details from research papers.
-Return only valid JSON.
-Do not add explanations.
 """,
         input=f"""
 Extract the datasets, train/test sample counts, and evaluation metrics from the text below.
 
-If train/test sample counts are not explicitly reported, write "not reported".
+Each chunk of text below is tagged with an id in brackets, e.g. "[3] some sentence.".
 
-Do not report additional explanations.
-
-Json dict keys should only be: datasets, train_sample_count, test_sample_count, metrics
+For each field, report:
+- "value": the answer as a string. If not explicitly reported, write "not reported".
+- "source_chunk_ids": the ids of the chunk(s) that support your answer. Use an empty list if the value is "not reported".
 
 Text:
 {retrieved_text}
-"""
+""",
+        text={
+            "format": {
+                "type": "json_schema",
+                "name": "experiment_details",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "datasets": field_schema,
+                        "train_sample_count": field_schema,
+                        "test_sample_count": field_schema,
+                        "metrics": field_schema,
+                    },
+                    "required": [
+                        "datasets",
+                        "train_sample_count",
+                        "test_sample_count",
+                        "metrics",
+                    ],
+                    "additionalProperties": False,
+                },
+            }
+        },
     )
-    return json.loads(response.output_text)
+    result = json.loads(response.output_text)
+
+    # Look up the actual chunk text for each citation ourselves, rather than
+    # trusting the model to reproduce quotes verbatim.
+    for field in result.values():
+        field["source_chunks"] = [chunks[i] for i in field["source_chunk_ids"]]
+
+    return result
 
 def process(paper_name):
     pdf_path = os.path.join("papers", paper_name + ".pdf")
@@ -111,16 +154,11 @@ paper_names = [
     if f.endswith(".pdf")
 ]
 
-def flatten(value):
-    if isinstance(value, list):
-        return ", ".join(str(v) for v in value)
-    return value
-
 
 new_results = []
 for name in paper_names:
     result = process(name)
-    new_results.append({"paper": name, **{k: flatten(v) for k, v in result.items()}})
+    new_results.append({"paper": name, **{k: v["value"] for k, v in result.items()}})
 
 summary_path = os.path.join(RESULTS_DIR, "summary.json")
 
