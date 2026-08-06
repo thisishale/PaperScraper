@@ -154,16 +154,11 @@ paper_names = [
     if f.endswith(".pdf")
 ]
 
-def flatten(value):
-    if isinstance(value, list):
-        return ", ".join(str(v) for v in value)
-    return value
-
 
 new_results = []
 for name in paper_names:
     result = process(name)
-    new_results.append({"paper": name, **{k: flatten(v) for k, v in result.items()}})
+    new_results.append({"paper": name, **{k: v["value"] for k, v in result.items()}})
 
 summary_path = os.path.join(RESULTS_DIR, "summary.json")
 
