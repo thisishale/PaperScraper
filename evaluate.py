@@ -41,9 +41,8 @@ Predicted: {predicted}
 
 Grade the predicted value against the ground truth:
 - "correct": matches in meaning, even if worded differently
-- "partial": partially correct or incomplete (e.g. missing one of two datasets)
-- "incorrect": wrong, contradicts ground truth, or hallucinated when ground
-  truth says "not reported"
+- "partial": A dataset from ground truth is missing in prediction
+- "incorrect": Ground truth says "not reported" but prediction has a dataset name in it.
 
 Give a one-sentence reason.
 """,
@@ -92,7 +91,7 @@ def evaluate_paper(paper_name, results_dir):
     field_scores = {}
     for field in FIELDS:
         gt_value = to_text(ground_truth[field]["value"])
-        pred_value = to_text(predicted[field])
+        pred_value = to_text(predicted[field]["value"])
 
         judgment = llm_judge(field, pred_value, gt_value)
 
@@ -144,13 +143,14 @@ def main():
     flag_parser.add_argument("--num-result", type=int, default=1)
     num_result = flag_parser.parse_known_args()[0].num_result
     results_dir = f"results_{num_result}"
+    eval_reports_dir = f"eval_reports_{num_result}"
 
     paper_names = paper_names_with_ground_truth()
     if not paper_names:
         print("No ground-truth files found in groundtruth/. Nothing to evaluate.")
         return
 
-    os.makedirs("eval_reports", exist_ok=True)
+    os.makedirs(eval_reports_dir, exist_ok=True)
 
     report = {}
     for paper_name in paper_names:
@@ -158,7 +158,7 @@ def main():
         field_scores = evaluate_paper(paper_name, results_dir)
         report[paper_name] = field_scores
 
-        paper_report_path = os.path.join("eval_reports", paper_name + ".json")
+        paper_report_path = os.path.join(eval_reports_dir, paper_name + ".json")
         with open(paper_report_path, "w", encoding="utf-8") as f:
             json.dump(field_scores, f, indent=2)
         print(f"  Saved {paper_report_path}")
@@ -172,7 +172,7 @@ def main():
 
     print("\n=== Evaluation Summary ===")
     print(json.dumps(summary, indent=2))
-    print(f"\nPer-paper reports saved to eval_reports/, summary saved to {summary_path}")
+    print(f"\nPer-paper reports saved to {eval_reports_dir}/, summary saved to {summary_path}")
 
 
 if __name__ == "__main__":
