@@ -1,5 +1,6 @@
 from dotenv import load_dotenv
 from openai import OpenAI
+import argparse
 import json
 import os
 import difflib
@@ -79,9 +80,9 @@ def to_text(value):
     return str(value)
 
 
-def evaluate_paper(paper_name):
+def evaluate_paper(paper_name, results_dir):
     gt_path = os.path.join("groundtruth", paper_name + ".json")
-    pred_path = os.path.join("results", paper_name + "_results.json")
+    pred_path = os.path.join(results_dir, paper_name + "_results.json")
 
     with open(gt_path, encoding="utf-8") as f:
         ground_truth = json.load(f)
@@ -136,6 +137,14 @@ def summarize(report):
 
 
 def main():
+    # --num-result must match the value main.py was run with, so this reads
+    # predictions from (and writes eval_summary.json into) the same
+    # results_{num_result}/ directory that run produced.
+    flag_parser = argparse.ArgumentParser(add_help=False)
+    flag_parser.add_argument("--num-result", type=int, default=1)
+    num_result = flag_parser.parse_known_args()[0].num_result
+    results_dir = f"results_{num_result}"
+
     paper_names = paper_names_with_ground_truth()
     if not paper_names:
         print("No ground-truth files found in groundtruth/. Nothing to evaluate.")
@@ -146,7 +155,7 @@ def main():
     report = {}
     for paper_name in paper_names:
         print(f"Evaluating {paper_name}...")
-        field_scores = evaluate_paper(paper_name)
+        field_scores = evaluate_paper(paper_name, results_dir)
         report[paper_name] = field_scores
 
         paper_report_path = os.path.join("eval_reports", paper_name + ".json")
@@ -156,8 +165,8 @@ def main():
 
     summary = summarize(report)
 
-    os.makedirs("results", exist_ok=True)
-    summary_path = os.path.join("results", "eval_summary.json")
+    os.makedirs(results_dir, exist_ok=True)
+    summary_path = os.path.join(results_dir, "eval_summary.json")
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 

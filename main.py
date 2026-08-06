@@ -9,7 +9,21 @@ import numpy as np
 load_dotenv("openai.env")
 client = OpenAI()
 
-QUERY = "datasets used, number of training samples, number of test samples, evaluation metrics, experimental results"
+# --num-result picks which results_{num_result}/ directory this run reads
+# from and writes to, so separate runs (e.g. different prompts/models) don't
+# clobber each other's output.
+# --overwrite-summary starts summary.json over from scratch, using only
+# what this run processes. Default (unset) merges into the existing file --
+# papers not reprocessed this run keep their old row.
+_flag_parser = argparse.ArgumentParser(add_help=False)
+_flag_parser.add_argument("--num-result", type=int, default=1)
+_flag_parser.add_argument("--overwrite-summary", action="store_true")
+_flags = _flag_parser.parse_known_args()[0]
+NUM_RESULT = _flags.num_result
+OVERWRITE_SUMMARY = _flags.overwrite_summary
+RESULTS_DIR = f"results_{NUM_RESULT}"
+
+QUERY = "datasets used, training, number of training samples, number of test samples, evaluation metrics"
 def embed(texts):
     response = client.embeddings.create(input=texts, model="text-embedding-3-small")
     return np.array([item.embedding for item in response.data])
@@ -82,8 +96,8 @@ def process(paper_name):
     print(f"Processing {pdf_path}...")
     result = extract(pdf_path)
 
-    os.makedirs("results", exist_ok=True)
-    output_path = os.path.join("results", paper_name + "_results.json")
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    output_path = os.path.join(RESULTS_DIR, paper_name + "_results.json")
     with open(output_path, "w") as f:
         json.dump(result, f, indent=2)
     print(f"  Saved {output_path}")
@@ -103,19 +117,12 @@ def flatten(value):
     return value
 
 
-# --overwrite-summary starts summary.json over from scratch, using only
-# what this run processes. Default (unset) merges into the existing file --
-# papers not reprocessed this run keep their old row.
-_flag_parser = argparse.ArgumentParser(add_help=False)
-_flag_parser.add_argument("--overwrite-summary", action="store_true")
-OVERWRITE_SUMMARY = _flag_parser.parse_known_args()[0].overwrite_summary
-
 new_results = []
 for name in paper_names:
     result = process(name)
     new_results.append({"paper": name, **{k: flatten(v) for k, v in result.items()}})
 
-summary_path = os.path.join("results", "summary.json")
+summary_path = os.path.join(RESULTS_DIR, "summary.json")
 
 if OVERWRITE_SUMMARY or not os.path.exists(summary_path):
     existing_results = []
