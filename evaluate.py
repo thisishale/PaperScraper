@@ -10,6 +10,22 @@ client = OpenAI()
 
 FIELDS = ["datasets", "train_sample_count", "test_sample_count", "metrics"]
 
+# Mirrors the field content boundaries in main.py's extraction prompt, so the
+# judge grades against the same definition of what belongs in each field --
+# not just "does it look similar," but "does it contain the right kind of thing."
+FIELD_DESCRIPTIONS = {
+    "datasets": (
+        "the name(s) of the dataset(s) used, and nothing else -- no sample "
+        "counts, sizes, splits, or other statistics"
+    ),
+    "train_sample_count": "the number of training samples/examples or ratios",
+    "test_sample_count": "the number of test samples/examples only or ratios",
+    "metrics": (
+        "the name(s) of the evaluation metric(s) used, not the numeric "
+        "results/scores those metrics produced"
+    ),
+}
+
 
 def normalize(text):
     return " ".join(text.lower().split())
@@ -36,13 +52,17 @@ a research-paper field extraction task.
 """,
         input=f"""
 Field: {field}
+This field should contain: {FIELD_DESCRIPTIONS[field]}
+
 Ground truth: {ground_truth}
 Predicted: {predicted}
 
 Grade the predicted value against the ground truth:
-- "correct": matches in meaning, even if worded differently
+- "correct": matches in meaning, even if worded differently, and contains only the kind of
+  content described above
 - "partial": prediction covers part of what ground truth reports, but is missing or gets wrong
-  some of it (e.g. ground truth lists two datasets/metrics and prediction only has one)
+  some of it (e.g. ground truth lists two datasets/metrics and prediction only has one), or
+  prediction includes extra content that doesn't belong in this field per the description above
 - "incorrect": ground truth says "not reported" but prediction has a real value, or ground truth
   has a meaningful value but prediction says "not reported"
 
@@ -142,7 +162,7 @@ def main():
     # predictions from (and writes eval_summary.json into) the same
     # results_{num_result}/ directory that run produced.
     flag_parser = argparse.ArgumentParser(add_help=False)
-    flag_parser.add_argument("--num-result", type=int, default=1)
+    flag_parser.add_argument("--num-result", type=int, default=2)
     num_result = flag_parser.parse_known_args()[0].num_result
     results_dir = f"results_{num_result}"
     eval_reports_dir = f"eval_reports_{num_result}"
