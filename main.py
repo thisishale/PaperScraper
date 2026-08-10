@@ -16,14 +16,40 @@ client = OpenAI()
 # what this run processes. Default (unset) merges into the existing file --
 # papers not reprocessed this run keep their old row.
 _flag_parser = argparse.ArgumentParser(add_help=False)
-_flag_parser.add_argument("--num-result", type=int, default=1)
+_flag_parser.add_argument("--num-result", type=int, default=2)
 _flag_parser.add_argument("--overwrite-summary", action="store_true")
 _flags = _flag_parser.parse_known_args()[0]
 NUM_RESULT = _flags.num_result
 OVERWRITE_SUMMARY = _flags.overwrite_summary
 RESULTS_DIR = f"results_{NUM_RESULT}"
 
-QUERY = "datasets used, training, number of training samples, number of test samples, evaluation metrics"
+# HyDE: instead of one blended query, use a hand-written hypothetical answer
+# passage per field. Answer-shaped text embeds closer to real answer-shaped
+# text than a question or keyword list does, and each field gets its own
+# focused search instead of competing in one merged ranking.
+HYDE_PASSAGES = {
+    "datasets": (
+        "We evaluate our method on the CIFAR-10, ImageNet, and SQuAD datasets, "
+        "as well as several other publicly available benchmarks commonly used "
+        "in this research area. The dataset was collected from a public "
+        "repository and split into training and test sets."
+    ),
+    "train_sample_count": (
+        "The training set consists of 50,000 examples. We trained the model "
+        "on a total of 100,000 labeled training samples."
+    ),
+    "test_sample_count": (
+        "The test set contains 10,000 examples, held out for final "
+        "evaluation. We evaluated our model on 5,000 test samples."
+    ),
+    "metrics": (
+        "We report accuracy, precision, recall, F1 score, mean squared error "
+        "(MSE), and area under the curve (AUC) as our evaluation metrics. "
+        "The model's performance was measured using these standard metrics."
+    ),
+}
+TOP_K_PER_FIELD = 10  # 4 fields x 10 = up to 40 retrieved chunks (fewer after dedupe overlap)
+
 def embed(texts):
     response = client.embeddings.create(input=texts, model="text-embedding-3-small")
     return np.array([item.embedding for item in response.data])
@@ -62,11 +88,21 @@ def extract(pdf_path):
     chunks = [sub for s in sentences for sub in split_long_chunk(s)]
 
     chunk_embeddings = embed(chunks)
-    query_embedding = embed([QUERY])[0]
+    hyde_embeddings = embed(list(HYDE_PASSAGES.values()))
 
+    # Run retrieval once per field's hypothetical passage, then union the
+    # results -- a chunk only needs to win one field's search, not score
+    # well against a single blended query covering all four at once.
     norms = np.linalg.norm(chunk_embeddings, axis=1, keepdims=True)
-    scores = (chunk_embeddings / norms) @ (query_embedding / np.linalg.norm(query_embedding))
-    top_indices = sorted(np.argsort(scores)[::-1][:20])
+    normalized_chunks = chunk_embeddings / norms
+
+    retrieved_ids = set()
+    for hyde_embedding in hyde_embeddings:
+        scores = normalized_chunks @ (hyde_embedding / np.linalg.norm(hyde_embedding))
+        top_for_field = np.argsort(scores)[::-1][:TOP_K_PER_FIELD]
+        retrieved_ids.update(top_for_field.tolist())
+
+    top_indices = sorted(retrieved_ids)
     retrieved_text = "\n".join(f"[{i}] {chunks[i]}" for i in top_indices)
 
     # Each field gets its own value plus the id(s) of the chunk(s) it was
