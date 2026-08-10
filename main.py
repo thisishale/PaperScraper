@@ -138,8 +138,17 @@ Extract the datasets, train/test sample counts, and evaluation metrics from the 
 
 Each chunk of text below is tagged with an id in brackets, e.g. "[3] some sentence.".
 
+Field content -- include ONLY what's described, nothing else:
+- "datasets": the name(s) of the dataset(s) used, and nothing else. Do not
+  include sample counts, sizes, splits, or other statistics here -- those
+  belong in the fields below.
+- "train_sample_count": the number of training samples/examples or ratios in case of splits.
+- "test_sample_count": the number of test samples/examples only or ratios in case of splits.
+- "metrics": the name(s) of the evaluation metric(s) used (e.g. accuracy,
+  F1, MSE), not the numeric results/scores those metrics produced.
+
 For each field, report:
-- "value": the answer as a string. If not explicitly reported, write "not reported".
+- "value": the answer as a string, containing only what's described above. If not explicitly reported, write "not reported".
 - "source_chunk_ids": the ids of the chunk(s) that support your answer. Use an empty list if the value is "not reported".
 
 Text:
