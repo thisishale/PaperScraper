@@ -162,7 +162,7 @@ def main():
     # predictions from (and writes eval_summary.json into) the same
     # results_{num_result}/ directory that run produced.
     flag_parser = argparse.ArgumentParser(add_help=False)
-    flag_parser.add_argument("--num-result", type=int, default=2)
+    flag_parser.add_argument("--num-result", type=int, default=3)
     num_result = flag_parser.parse_known_args()[0].num_result
     results_dir = f"results_{num_result}"
     eval_reports_dir = f"eval_reports_{num_result}"
