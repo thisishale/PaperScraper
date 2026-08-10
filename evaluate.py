@@ -41,8 +41,10 @@ Predicted: {predicted}
 
 Grade the predicted value against the ground truth:
 - "correct": matches in meaning, even if worded differently
-- "partial": A dataset from ground truth is missing in prediction
-- "incorrect": Ground truth says "not reported" but prediction has a dataset name in it.
+- "partial": prediction covers part of what ground truth reports, but is missing or gets wrong
+  some of it (e.g. ground truth lists two datasets/metrics and prediction only has one)
+- "incorrect": ground truth says "not reported" but prediction has a real value, or ground truth
+  has a meaningful value but prediction says "not reported"
 
 Give a one-sentence reason.
 """,
@@ -166,7 +168,7 @@ def main():
     summary = summarize(report)
 
     os.makedirs(results_dir, exist_ok=True)
-    summary_path = os.path.join(results_dir, "eval_summary.json")
+    summary_path = os.path.join(results_dir, f"eval_summary_{num_result}.json")
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
