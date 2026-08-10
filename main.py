@@ -17,7 +17,7 @@ client = OpenAI()
 # what this run processes. Default (unset) merges into the existing file --
 # papers not reprocessed this run keep their old row.
 _flag_parser = argparse.ArgumentParser(add_help=False)
-_flag_parser.add_argument("--num-result", type=int, default=3)
+_flag_parser.add_argument("--num-result", type=int, default=4)
 _flag_parser.add_argument("--overwrite-summary", action="store_true")
 _flags = _flag_parser.parse_known_args()[0]
 NUM_RESULT = _flags.num_result
@@ -171,6 +171,11 @@ Field content -- include ONLY what's described, nothing else:
 - "test_sample_count": the number of test samples/examples only or ratios in case of splits.
 - "metrics": the name(s) of the evaluation metric(s) used (e.g. accuracy,
   F1, MSE), not the numeric results/scores those metrics produced.
+
+If the paper uses MORE THAN ONE dataset, and train/test counts or metrics differ per dataset,
+report a per-dataset breakdown within the same field instead of only reporting one dataset's
+numbers -- e.g. "COCO: 80K train, 35K val; Cityscapes: 2975 train". Do not silently drop a
+dataset's numbers just because another dataset's are also present in the text.
 
 For each field, report:
 - "value": the answer as a string, containing only what's described above. If not explicitly reported, write "not reported".

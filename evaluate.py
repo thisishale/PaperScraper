@@ -64,7 +64,12 @@ Grade the predicted value against the ground truth:
   some of it (e.g. ground truth lists two datasets/metrics and prediction only has one), or
   prediction includes extra content that doesn't belong in this field per the description above
 - "incorrect": ground truth says "not reported" but prediction has a real value, or ground truth
-  has a meaningful value but prediction says "not reported"
+  has a meaningful value but prediction says "not reported". Nothing matches between ground truth and prediction.
+
+Do NOT grade down for differences in phrasing, naming style, capitalization, or level of detail
+if they clearly refer to the same underlying dataset/count/metric. For example, "ImageNet-5k
+pretraining dataset" and "ImageNet (5k-class subset)" describe the same dataset and should be
+graded "correct", not "partial" -- only use "partial" when something is actually missing but there are some matches, not because the wording differs.
 
 Give a one-sentence reason.
 """,
@@ -162,7 +167,7 @@ def main():
     # predictions from (and writes eval_summary.json into) the same
     # results_{num_result}/ directory that run produced.
     flag_parser = argparse.ArgumentParser(add_help=False)
-    flag_parser.add_argument("--num-result", type=int, default=3)
+    flag_parser.add_argument("--num-result", type=int, default=4)
     num_result = flag_parser.parse_known_args()[0].num_result
     results_dir = f"results_{num_result}"
     eval_reports_dir = f"eval_reports_{num_result}"
