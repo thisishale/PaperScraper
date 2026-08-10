@@ -17,7 +17,7 @@ client = OpenAI()
 # what this run processes. Default (unset) merges into the existing file --
 # papers not reprocessed this run keep their old row.
 _flag_parser = argparse.ArgumentParser(add_help=False)
-_flag_parser.add_argument("--num-result", type=int, default=2)
+_flag_parser.add_argument("--num-result", type=int, default=3)
 _flag_parser.add_argument("--overwrite-summary", action="store_true")
 _flags = _flag_parser.parse_known_args()[0]
 NUM_RESULT = _flags.num_result
@@ -81,9 +81,34 @@ def split_long_chunk(text, max_words=MAX_CHUNK_WORDS, max_chars=MAX_CHUNK_CHARS)
             bounded.extend(piece[i:i + max_chars] for i in range(0, len(piece), max_chars))
     return bounded
 
-def extract(pdf_path):
+def is_table_like_line(line, digit_ratio_threshold=0.3):
+    stripped = line.strip()
+    if not stripped:
+        return False
+    digit_chars = sum(c.isdigit() for c in stripped)
+    return (digit_chars / len(stripped)) > digit_ratio_threshold
+
+def strip_tables(page_text):
+    # pypdf gives no structural info about what was actually a table (we
+    # tried pdfplumber's structural table detection first -- it either
+    # missed tables with no real ruling lines, or over-matched almost the
+    # whole page). This is a text-only heuristic instead: drop lines with a
+    # high density of digits (raw table rows). No special-casing for
+    # captions -- a real caption is mostly words, so it survives on its own
+    # (low digit ratio) without needing an explicit keep-rule. Known gap: this
+    # can miss non-numeric table cells (e.g. a single-letter column header
+    # like "L" or "M") since those have no digits to flag on.
+    return "\n".join(
+        line for line in page_text.split("\n") if not is_table_like_line(line)
+    )
+
+def extract_body_text(pdf_path):
     reader = PdfReader(pdf_path)
-    paper_text = " ".join(page.extract_text() or "" for page in reader.pages)
+    page_texts = [strip_tables(page.extract_text() or "") for page in reader.pages]
+    return " ".join(page_texts)
+
+def extract(pdf_path):
+    paper_text = extract_body_text(pdf_path)
 
     # Split on periods, but not a period sandwiched between two digits
     # (e.g. "4.5" or "5.1 Training Data") -- that's a decimal/section
