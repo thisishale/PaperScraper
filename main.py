@@ -4,6 +4,7 @@ from pypdf import PdfReader
 import json
 import argparse
 import os
+import re
 import numpy as np
 
 load_dotenv("openai.env")
@@ -84,7 +85,14 @@ def extract(pdf_path):
     reader = PdfReader(pdf_path)
     paper_text = " ".join(page.extract_text() or "" for page in reader.pages)
 
-    sentences = [s.strip() for s in paper_text.split(".") if s.strip()]
+    # Split on periods, but not a period sandwiched between two digits
+    # (e.g. "4.5" or "5.1 Training Data") -- that's a decimal/section
+    # number, not a sentence boundary.
+    sentences = [
+        s.strip()
+        for s in re.split(r"(?<!\d)\.|\.(?!\d)", paper_text)
+        if s.strip()
+    ]
     chunks = [sub for s in sentences for sub in split_long_chunk(s)]
 
     chunk_embeddings = embed(chunks)
