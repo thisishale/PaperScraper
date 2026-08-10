@@ -92,7 +92,7 @@ def evaluate_paper(paper_name, results_dir):
 
     field_scores = {}
     for field in FIELDS:
-        gt_value = to_text(ground_truth[field]["value"])
+        gt_value = to_text(ground_truth[field])
         pred_value = to_text(predicted[field]["value"])
 
         judgment = llm_judge(field, pred_value, gt_value)
