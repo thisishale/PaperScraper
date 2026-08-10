@@ -55,7 +55,7 @@ def embed(texts):
     return np.array([item.embedding for item in response.data])
 
 MAX_CHUNK_WORDS = 200  # keeps every chunk safely under the 8192-token embedding limit
-MAX_CHUNK_CHARS = 2000  # safety net for text with little/no whitespace to split on
+MAX_CHUNK_CHARS = 1000  # safety net for text with little/no whitespace to split on
 
 def split_long_chunk(text, max_words=MAX_CHUNK_WORDS, max_chars=MAX_CHUNK_CHARS):
     words = text.split()
