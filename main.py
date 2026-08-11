@@ -1,14 +1,35 @@
+import os
+
+# Models (layout detection, table structure) are already cached locally --
+# this skips the "is my cache still current" check the HF Hub libraries
+# otherwise make on every load, which was triggering an unauthenticated
+# rate-limit warning on every run. Must be set before unstructured/transformers
+# are imported, since they read these at import time.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
 from dotenv import load_dotenv
 from openai import OpenAI
 from unstructured.partition.pdf import partition_pdf
 from unstructured.documents.elements import Table
+import unstructured_pytesseract
 import json
 import argparse
-import os
 import re
 import random
 import numpy as np
 import torch
+
+# Point pytesseract at the Tesseract executable directly instead of relying
+# on it being found via PATH -- PATH updates made by an installer (e.g.
+# winget) don't reliably propagate to already-running processes/shells
+# (VSCode, Explorer-spawned terminals, etc.), so a session restart isn't
+# guaranteed to pick them up. This works regardless of PATH state. Guarded
+# so it's a no-op if tesseract is already resolvable (e.g. on another
+# machine/OS where PATH is set up correctly).
+_default_tesseract_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+if os.path.exists(_default_tesseract_path):
+    unstructured_pytesseract.pytesseract.tesseract_cmd = _default_tesseract_path
 
 # The hi_res layout-detection model runs on CPU here, and multi-threaded CPU
 # matrix ops can sum floats in a different order run-to-run, occasionally
