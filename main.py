@@ -1,11 +1,25 @@
 from dotenv import load_dotenv
 from openai import OpenAI
-from pypdf import PdfReader
+from unstructured.partition.pdf import partition_pdf
+from unstructured.documents.elements import Table
 import json
 import argparse
 import os
 import re
+import random
 import numpy as np
+import torch
+
+# The hi_res layout-detection model runs on CPU here, and multi-threaded CPU
+# matrix ops can sum floats in a different order run-to-run, occasionally
+# shifting a detection's confidence score across a threshold -- we saw this
+# concretely change whether a table's rows got picked up between identical
+# runs. Single-threaded + deterministic algorithms eliminates that variance,
+# at the cost of slower inference (this was the noticeable tradeoff we
+# measured while testing).
+
+torch.set_num_threads(4)
+torch.use_deterministic_algorithms(True, warn_only=True)
 
 load_dotenv("openai.env")
 client = OpenAI()
@@ -17,7 +31,7 @@ client = OpenAI()
 # what this run processes. Default (unset) merges into the existing file --
 # papers not reprocessed this run keep their old row.
 _flag_parser = argparse.ArgumentParser(add_help=False)
-_flag_parser.add_argument("--num-result", type=int, default=4)
+_flag_parser.add_argument("--num-result", type=int, default=5)
 _flag_parser.add_argument("--overwrite-summary", action="store_true")
 _flags = _flag_parser.parse_known_args()[0]
 NUM_RESULT = _flags.num_result
@@ -81,31 +95,22 @@ def split_long_chunk(text, max_words=MAX_CHUNK_WORDS, max_chars=MAX_CHUNK_CHARS)
             bounded.extend(piece[i:i + max_chars] for i in range(0, len(piece), max_chars))
     return bounded
 
-def is_table_like_line(line, digit_ratio_threshold=0.3):
-    stripped = line.strip()
-    if not stripped:
-        return False
-    digit_chars = sum(c.isdigit() for c in stripped)
-    return (digit_chars / len(stripped)) > digit_ratio_threshold
-
-def strip_tables(page_text):
-    # pypdf gives no structural info about what was actually a table (we
-    # tried pdfplumber's structural table detection first -- it either
-    # missed tables with no real ruling lines, or over-matched almost the
-    # whole page). This is a text-only heuristic instead: drop lines with a
-    # high density of digits (raw table rows). No special-casing for
-    # captions -- a real caption is mostly words, so it survives on its own
-    # (low digit ratio) without needing an explicit keep-rule. Known gap: this
-    # can miss non-numeric table cells (e.g. a single-letter column header
-    # like "L" or "M") since those have no digits to flag on.
-    return "\n".join(
-        line for line in page_text.split("\n") if not is_table_like_line(line)
-    )
-
 def extract_body_text(pdf_path):
-    reader = PdfReader(pdf_path)
-    page_texts = [strip_tables(page.extract_text() or "") for page in reader.pages]
-    return " ".join(page_texts)
+    # hi_res runs an actual layout-detection model (not a text heuristic) to
+    # classify each region of the page, so table content can be tagged
+    # distinctly from narrative text/captions instead of being guessed at
+    # from raw text alone. Table rows are kept (not dropped) -- some papers
+    # only state a number in a table with no restatement in prose -- but
+    # tagged "[TABLE DATA]" so the extraction prompt can treat names/numbers
+    # found there with more caution than the same content found in prose
+    # (this is what caused CMU-Pose+++, a competing method, to get
+    # misattributed as a dataset when it was only visible in raw table text).
+    # Requires Tesseract OCR installed as a system binary (not pip-installable).
+    elements = partition_pdf(filename=pdf_path, strategy="hi_res")
+    body_elements = [
+        f"[TABLE DATA] {e}" if isinstance(e, Table) else str(e) for e in elements
+    ]
+    return " ".join(body_elements)
 
 def extract(pdf_path):
     paper_text = extract_body_text(pdf_path)
@@ -162,6 +167,13 @@ You extract experimental details from research papers.
 Extract the datasets, train/test sample counts, and evaluation metrics from the text below.
 
 Each chunk of text below is tagged with an id in brackets, e.g. "[3] some sentence.".
+
+Some chunks are additionally marked "[TABLE DATA]" -- this means the text comes from a raw
+table row, extracted without its column headers or full surrounding context. Names next to
+numbers in a "[TABLE DATA]" chunk are NOT necessarily datasets -- they are often competing
+methods/models being compared in a results table. Only report a name found in "[TABLE DATA]"
+as a dataset if non-table text elsewhere confirms it's a dataset; otherwise prefer non-table
+text as the source for a field whenever both are available.
 
 Field content -- include ONLY what's described, nothing else:
 - "datasets": the name(s) of the dataset(s) used, and nothing else. Do not
