@@ -168,7 +168,7 @@ Field content -- include ONLY what's described, nothing else:
   include sample counts, sizes, splits, or other statistics here -- those
   belong in the fields below.
 - "train_sample_count": the number of training samples/examples or ratios in case of splits.
-- "test_sample_count": the number of test samples/examples only or ratios in case of splits.
+- "test_sample_count": the number of test samples/examples only or ratios in case of splits. Validation samples do not count as test.
 - "metrics": the name(s) of the evaluation metric(s) used (e.g. accuracy,
   F1, MSE), not the numeric results/scores those metrics produced.
 
