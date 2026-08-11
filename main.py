@@ -6,7 +6,20 @@ import json
 import argparse
 import os
 import re
+import random
 import numpy as np
+import torch
+
+# The hi_res layout-detection model runs on CPU here, and multi-threaded CPU
+# matrix ops can sum floats in a different order run-to-run, occasionally
+# shifting a detection's confidence score across a threshold -- we saw this
+# concretely change whether a table's rows got picked up between identical
+# runs. Single-threaded + deterministic algorithms eliminates that variance,
+# at the cost of slower inference (this was the noticeable tradeoff we
+# measured while testing).
+
+torch.set_num_threads(4)
+torch.use_deterministic_algorithms(True, warn_only=True)
 
 load_dotenv("openai.env")
 client = OpenAI()
@@ -18,7 +31,7 @@ client = OpenAI()
 # what this run processes. Default (unset) merges into the existing file --
 # papers not reprocessed this run keep their old row.
 _flag_parser = argparse.ArgumentParser(add_help=False)
-_flag_parser.add_argument("--num-result", type=int, default=4)
+_flag_parser.add_argument("--num-result", type=int, default=5)
 _flag_parser.add_argument("--overwrite-summary", action="store_true")
 _flags = _flag_parser.parse_known_args()[0]
 NUM_RESULT = _flags.num_result
