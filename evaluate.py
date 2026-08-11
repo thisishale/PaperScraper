@@ -10,6 +10,22 @@ client = OpenAI()
 
 FIELDS = ["datasets", "train_sample_count", "test_sample_count", "metrics"]
 
+# Mirrors the field content boundaries in main.py's extraction prompt, so the
+# judge grades against the same definition of what belongs in each field --
+# not just "does it look similar," but "does it contain the right kind of thing."
+FIELD_DESCRIPTIONS = {
+    "datasets": (
+        "the name(s) of the dataset(s) used, and nothing else -- no sample "
+        "counts, sizes, splits, or other statistics"
+    ),
+    "train_sample_count": "the number of training samples/examples or ratios",
+    "test_sample_count": "the number of test samples/examples only or ratios",
+    "metrics": (
+        "the name(s) of the evaluation metric(s) used, not the numeric "
+        "results/scores those metrics produced"
+    ),
+}
+
 
 def normalize(text):
     return " ".join(text.lower().split())
@@ -36,14 +52,24 @@ a research-paper field extraction task.
 """,
         input=f"""
 Field: {field}
+This field should contain: {FIELD_DESCRIPTIONS[field]}
+
 Ground truth: {ground_truth}
 Predicted: {predicted}
 
 Grade the predicted value against the ground truth:
-- "correct": matches in meaning, even if worded differently
-- "partial": partially correct or incomplete (e.g. missing one of two datasets)
-- "incorrect": wrong, contradicts ground truth, or hallucinated when ground
-  truth says "not reported"
+- "correct": matches in meaning, even if worded differently, and contains only the kind of
+  content described above
+- "partial": prediction covers part of what ground truth reports, but is missing or gets wrong
+  some of it (e.g. ground truth lists two datasets/metrics and prediction only has one), or
+  prediction includes extra content that doesn't belong in this field per the description above
+- "incorrect": ground truth says "not reported" but prediction has a real value, or ground truth
+  has a meaningful value but prediction says "not reported". Nothing matches between ground truth and prediction.
+
+Do NOT grade down for differences in phrasing, naming style, capitalization, or level of detail
+if they clearly refer to the same underlying dataset/count/metric. For example, "ImageNet-5k
+pretraining dataset" and "ImageNet (5k-class subset)" describe the same dataset and should be
+graded "correct", not "partial" -- only use "partial" when something is actually missing but there are some matches, not because the wording differs.
 
 Give a one-sentence reason.
 """,
@@ -91,8 +117,8 @@ def evaluate_paper(paper_name, results_dir):
 
     field_scores = {}
     for field in FIELDS:
-        gt_value = to_text(ground_truth[field]["value"])
-        pred_value = to_text(predicted[field])
+        gt_value = to_text(ground_truth[field])
+        pred_value = to_text(predicted[field]["value"])
 
         judgment = llm_judge(field, pred_value, gt_value)
 
@@ -141,16 +167,17 @@ def main():
     # predictions from (and writes eval_summary.json into) the same
     # results_{num_result}/ directory that run produced.
     flag_parser = argparse.ArgumentParser(add_help=False)
-    flag_parser.add_argument("--num-result", type=int, default=1)
+    flag_parser.add_argument("--num-result", type=int, default=4)
     num_result = flag_parser.parse_known_args()[0].num_result
     results_dir = f"results_{num_result}"
+    eval_reports_dir = f"eval_reports_{num_result}"
 
     paper_names = paper_names_with_ground_truth()
     if not paper_names:
         print("No ground-truth files found in groundtruth/. Nothing to evaluate.")
         return
 
-    os.makedirs("eval_reports", exist_ok=True)
+    os.makedirs(eval_reports_dir, exist_ok=True)
 
     report = {}
     for paper_name in paper_names:
@@ -158,7 +185,7 @@ def main():
         field_scores = evaluate_paper(paper_name, results_dir)
         report[paper_name] = field_scores
 
-        paper_report_path = os.path.join("eval_reports", paper_name + ".json")
+        paper_report_path = os.path.join(eval_reports_dir, paper_name + ".json")
         with open(paper_report_path, "w", encoding="utf-8") as f:
             json.dump(field_scores, f, indent=2)
         print(f"  Saved {paper_report_path}")
@@ -166,13 +193,13 @@ def main():
     summary = summarize(report)
 
     os.makedirs(results_dir, exist_ok=True)
-    summary_path = os.path.join(results_dir, "eval_summary.json")
+    summary_path = os.path.join(results_dir, f"eval_summary_{num_result}.json")
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
     print("\n=== Evaluation Summary ===")
     print(json.dumps(summary, indent=2))
-    print(f"\nPer-paper reports saved to eval_reports/, summary saved to {summary_path}")
+    print(f"\nPer-paper reports saved to {eval_reports_dir}/, summary saved to {summary_path}")
 
 
 if __name__ == "__main__":

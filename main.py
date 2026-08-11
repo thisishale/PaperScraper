@@ -4,6 +4,7 @@ from pypdf import PdfReader
 import json
 import argparse
 import os
+import re
 import numpy as np
 
 load_dotenv("openai.env")
@@ -16,20 +17,46 @@ client = OpenAI()
 # what this run processes. Default (unset) merges into the existing file --
 # papers not reprocessed this run keep their old row.
 _flag_parser = argparse.ArgumentParser(add_help=False)
-_flag_parser.add_argument("--num-result", type=int, default=1)
+_flag_parser.add_argument("--num-result", type=int, default=4)
 _flag_parser.add_argument("--overwrite-summary", action="store_true")
 _flags = _flag_parser.parse_known_args()[0]
 NUM_RESULT = _flags.num_result
 OVERWRITE_SUMMARY = _flags.overwrite_summary
 RESULTS_DIR = f"results_{NUM_RESULT}"
 
-QUERY = "datasets used, training, number of training samples, number of test samples, evaluation metrics"
+# HyDE: instead of one blended query, use a hand-written hypothetical answer
+# passage per field. Answer-shaped text embeds closer to real answer-shaped
+# text than a question or keyword list does, and each field gets its own
+# focused search instead of competing in one merged ranking.
+HYDE_PASSAGES = {
+    "datasets": (
+        "We evaluate our method on the CIFAR-10, ImageNet, and SQuAD datasets, "
+        "as well as several other publicly available benchmarks commonly used "
+        "in this research area. The dataset was collected from a public "
+        "repository and split into training and test sets."
+    ),
+    "train_sample_count": (
+        "The training set consists of 50,000 examples. We trained the model "
+        "on a total of 100,000 labeled training samples."
+    ),
+    "test_sample_count": (
+        "The test set contains 10,000 examples, held out for final "
+        "evaluation. We evaluated our model on 5,000 test samples."
+    ),
+    "metrics": (
+        "We report accuracy, precision, recall, F1 score, mean squared error "
+        "(MSE), and area under the curve (AUC) as our evaluation metrics. "
+        "The model's performance was measured using these standard metrics."
+    ),
+}
+TOP_K_PER_FIELD = 10  # 4 fields x 10 = up to 40 retrieved chunks (fewer after dedupe overlap)
+
 def embed(texts):
     response = client.embeddings.create(input=texts, model="text-embedding-3-small")
     return np.array([item.embedding for item in response.data])
 
 MAX_CHUNK_WORDS = 200  # keeps every chunk safely under the 8192-token embedding limit
-MAX_CHUNK_CHARS = 2000  # safety net for text with little/no whitespace to split on
+MAX_CHUNK_CHARS = 1000  # safety net for text with little/no whitespace to split on
 
 def split_long_chunk(text, max_words=MAX_CHUNK_WORDS, max_chars=MAX_CHUNK_CHARS):
     words = text.split()
@@ -54,19 +81,61 @@ def split_long_chunk(text, max_words=MAX_CHUNK_WORDS, max_chars=MAX_CHUNK_CHARS)
             bounded.extend(piece[i:i + max_chars] for i in range(0, len(piece), max_chars))
     return bounded
 
-def extract(pdf_path):
-    reader = PdfReader(pdf_path)
-    paper_text = " ".join(page.extract_text() or "" for page in reader.pages)
+def is_table_like_line(line, digit_ratio_threshold=0.3):
+    stripped = line.strip()
+    if not stripped:
+        return False
+    digit_chars = sum(c.isdigit() for c in stripped)
+    return (digit_chars / len(stripped)) > digit_ratio_threshold
 
-    sentences = [s.strip() for s in paper_text.split(".") if s.strip()]
+def strip_tables(page_text):
+    # pypdf gives no structural info about what was actually a table (we
+    # tried pdfplumber's structural table detection first -- it either
+    # missed tables with no real ruling lines, or over-matched almost the
+    # whole page). This is a text-only heuristic instead: drop lines with a
+    # high density of digits (raw table rows). No special-casing for
+    # captions -- a real caption is mostly words, so it survives on its own
+    # (low digit ratio) without needing an explicit keep-rule. Known gap: this
+    # can miss non-numeric table cells (e.g. a single-letter column header
+    # like "L" or "M") since those have no digits to flag on.
+    return "\n".join(
+        line for line in page_text.split("\n") if not is_table_like_line(line)
+    )
+
+def extract_body_text(pdf_path):
+    reader = PdfReader(pdf_path)
+    page_texts = [strip_tables(page.extract_text() or "") for page in reader.pages]
+    return " ".join(page_texts)
+
+def extract(pdf_path):
+    paper_text = extract_body_text(pdf_path)
+
+    # Split on periods, but not a period sandwiched between two digits
+    # (e.g. "4.5" or "5.1 Training Data") -- that's a decimal/section
+    # number, not a sentence boundary.
+    sentences = [
+        s.strip()
+        for s in re.split(r"(?<!\d)\.|\.(?!\d)", paper_text)
+        if s.strip()
+    ]
     chunks = [sub for s in sentences for sub in split_long_chunk(s)]
 
     chunk_embeddings = embed(chunks)
-    query_embedding = embed([QUERY])[0]
+    hyde_embeddings = embed(list(HYDE_PASSAGES.values()))
 
+    # Run retrieval once per field's hypothetical passage, then union the
+    # results -- a chunk only needs to win one field's search, not score
+    # well against a single blended query covering all four at once.
     norms = np.linalg.norm(chunk_embeddings, axis=1, keepdims=True)
-    scores = (chunk_embeddings / norms) @ (query_embedding / np.linalg.norm(query_embedding))
-    top_indices = sorted(np.argsort(scores)[::-1][:20])
+    normalized_chunks = chunk_embeddings / norms
+
+    retrieved_ids = set()
+    for hyde_embedding in hyde_embeddings:
+        scores = normalized_chunks @ (hyde_embedding / np.linalg.norm(hyde_embedding))
+        top_for_field = np.argsort(scores)[::-1][:TOP_K_PER_FIELD]
+        retrieved_ids.update(top_for_field.tolist())
+
+    top_indices = sorted(retrieved_ids)
     retrieved_text = "\n".join(f"[{i}] {chunks[i]}" for i in top_indices)
 
     # Each field gets its own value plus the id(s) of the chunk(s) it was
@@ -94,8 +163,22 @@ Extract the datasets, train/test sample counts, and evaluation metrics from the 
 
 Each chunk of text below is tagged with an id in brackets, e.g. "[3] some sentence.".
 
+Field content -- include ONLY what's described, nothing else:
+- "datasets": the name(s) of the dataset(s) used, and nothing else. Do not
+  include sample counts, sizes, splits, or other statistics here -- those
+  belong in the fields below.
+- "train_sample_count": the number of training samples/examples or ratios in case of splits.
+- "test_sample_count": the number of test samples/examples only or ratios in case of splits. Validation samples do not count as test.
+- "metrics": the name(s) of the evaluation metric(s) used (e.g. accuracy,
+  F1, MSE), not the numeric results/scores those metrics produced.
+
+If the paper uses MORE THAN ONE dataset, and train/test counts or metrics differ per dataset,
+report a per-dataset breakdown within the same field instead of only reporting one dataset's
+numbers -- e.g. "COCO: 80K train, 35K val; Cityscapes: 2975 train". Do not silently drop a
+dataset's numbers just because another dataset's are also present in the text.
+
 For each field, report:
-- "value": the answer as a string. If not explicitly reported, write "not reported".
+- "value": the answer as a string, containing only what's described above. If not explicitly reported, write "not reported".
 - "source_chunk_ids": the ids of the chunk(s) that support your answer. Use an empty list if the value is "not reported".
 
 Text:
