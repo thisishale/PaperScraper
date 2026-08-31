@@ -52,7 +52,7 @@ client = OpenAI()
 # what this run processes. Default (unset) merges into the existing file --
 # papers not reprocessed this run keep their old row.
 _flag_parser = argparse.ArgumentParser(add_help=False)
-_flag_parser.add_argument("--num-result", type=int, default=5)
+_flag_parser.add_argument("--num-result", type=int, default=6)
 _flag_parser.add_argument("--overwrite-summary", action="store_true")
 _flags = _flag_parser.parse_known_args()[0]
 NUM_RESULT = _flags.num_result
