@@ -269,34 +269,38 @@ def process(paper_name):
     return result
 
 
-paper_names = [
-    os.path.splitext(f)[0]
-    for f in os.listdir("papers")
-    if f.endswith(".pdf")
-]
+def run_batch():
+    paper_names = [
+        os.path.splitext(f)[0]
+        for f in os.listdir("papers")
+        if f.endswith(".pdf")
+    ]
+
+    new_results = []
+    for name in paper_names:
+        result = process(name)
+        new_results.append({"paper": name, **{k: v["value"] for k, v in result.items()}})
+
+    summary_path = os.path.join(RESULTS_DIR, "summary.json")
+
+    if OVERWRITE_SUMMARY or not os.path.exists(summary_path):
+        existing_results = []
+    else:
+        with open(summary_path) as f:
+            existing_results = json.load(f)
+
+    # Merge by paper name: this run's rows overwrite any old row for the same
+    # paper; papers not reprocessed this run keep their previous row.
+    merged = {row["paper"]: row for row in existing_results}
+    for row in new_results:
+        merged[row["paper"]] = row
+    all_results = [merged[name] for name in sorted(merged)]
+
+    with open(summary_path, "w") as f:
+        json.dump(all_results, f, indent=2)
+
+    print(f"\nSummary saved to {summary_path}")
 
 
-new_results = []
-for name in paper_names:
-    result = process(name)
-    new_results.append({"paper": name, **{k: v["value"] for k, v in result.items()}})
-
-summary_path = os.path.join(RESULTS_DIR, "summary.json")
-
-if OVERWRITE_SUMMARY or not os.path.exists(summary_path):
-    existing_results = []
-else:
-    with open(summary_path) as f:
-        existing_results = json.load(f)
-
-# Merge by paper name: this run's rows overwrite any old row for the same
-# paper; papers not reprocessed this run keep their previous row.
-merged = {row["paper"]: row for row in existing_results}
-for row in new_results:
-    merged[row["paper"]] = row
-all_results = [merged[name] for name in sorted(merged)]
-
-with open(summary_path, "w") as f:
-    json.dump(all_results, f, indent=2)
-
-print(f"\nSummary saved to {summary_path}")
+if __name__ == "__main__":
+    run_batch()
