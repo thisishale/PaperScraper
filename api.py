@@ -1,11 +1,27 @@
 import os
 import tempfile
+import time
 
-from fastapi import FastAPI, UploadFile
+from fastapi import FastAPI, Request, UploadFile
 
 from main import extract
 
 app = FastAPI()
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    # call_next() is what actually runs the matching route (read_root,
+    # upload_test, extract_endpoint, whichever one matches this request) --
+    # everything before it runs before the route, everything after runs
+    # after, for every single route, without editing any of them.
+    start = time.time()
+    response = await call_next(request)
+    duration_ms = (time.time() - start) * 1000
+
+    print(f"{request.method} {request.url.path} -> {response.status_code} ({duration_ms:.1f}ms)")
+
+    return response
 
 
 @app.get("/")
