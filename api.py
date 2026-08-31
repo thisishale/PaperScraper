@@ -24,11 +24,11 @@ async def upload_test(file: UploadFile):
 
 
 @app.post("/extract")
-def extract_endpoint(file: UploadFile):
-    # Sync route -> use the sync .file attribute, not the async .read() we
-    # used in /upload-test. UploadFile exposes both; which one you use
-    # depends on whether the route itself is async def or plain def.
-    contents = file.file.read()
+async def extract_endpoint(file: UploadFile):
+    # Now async -> back to the async .read() (like /upload-test), and
+    # extract() is awaited directly since it's a real coroutine now, not
+    # wrapped in asyncio.run() the way main.py's sync batch script needs.
+    contents = await file.read()
 
     # extract() takes a file path, not raw bytes -- unstructured's
     # partition_pdf needs to open the file itself. Write to a temp file,
@@ -38,7 +38,7 @@ def extract_endpoint(file: UploadFile):
         tmp_path = tmp.name
 
     try:
-        result = extract(tmp_path)
+        result = await extract(tmp_path)
     finally:
         os.remove(tmp_path)
 

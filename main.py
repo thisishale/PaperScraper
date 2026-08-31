@@ -9,10 +9,11 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import AsyncOpenAI
 from unstructured.partition.pdf import partition_pdf
 from unstructured.documents.elements import Table
 import unstructured_pytesseract
+import asyncio
 import json
 import argparse
 import re
@@ -43,7 +44,7 @@ torch.set_num_threads(4)
 torch.use_deterministic_algorithms(True, warn_only=True)
 
 load_dotenv("openai.env")
-client = OpenAI()
+client = AsyncOpenAI()
 
 # --num-result picks which results_{num_result}/ directory this run reads
 # from and writes to, so separate runs (e.g. different prompts/models) don't
@@ -86,8 +87,8 @@ HYDE_PASSAGES = {
 }
 TOP_K_PER_FIELD = 10  # 4 fields x 10 = up to 40 retrieved chunks (fewer after dedupe overlap)
 
-def embed(texts):
-    response = client.embeddings.create(input=texts, model="text-embedding-3-small")
+async def embed(texts):
+    response = await client.embeddings.create(input=texts, model="text-embedding-3-small")
     return np.array([item.embedding for item in response.data])
 
 MAX_CHUNK_WORDS = 200  # keeps every chunk safely under the 8192-token embedding limit
@@ -133,8 +134,8 @@ def extract_body_text(pdf_path):
     ]
     return " ".join(body_elements)
 
-def extract(pdf_path):
-    paper_text = extract_body_text(pdf_path)
+async def extract(pdf_path):
+    paper_text = extract_body_text(pdf_path)  # sync -- no OpenAI call, just local PDF/OCR work
 
     # Split on periods, but not a period sandwiched between two digits
     # (e.g. "4.5" or "5.1 Training Data") -- that's a decimal/section
@@ -146,8 +147,8 @@ def extract(pdf_path):
     ]
     chunks = [sub for s in sentences for sub in split_long_chunk(s)]
 
-    chunk_embeddings = embed(chunks)
-    hyde_embeddings = embed(list(HYDE_PASSAGES.values()))
+    chunk_embeddings = await embed(chunks)
+    hyde_embeddings = await embed(list(HYDE_PASSAGES.values()))
 
     # Run retrieval once per field's hypothetical passage, then union the
     # results -- a chunk only needs to win one field's search, not score
@@ -179,7 +180,7 @@ def extract(pdf_path):
         "additionalProperties": False,
     }
 
-    response = client.responses.create(
+    response = await client.responses.create(
         model="gpt-5.4-nano",
         instructions="""
 You extract experimental details from research papers.
@@ -258,7 +259,11 @@ Text:
 def process(paper_name):
     pdf_path = os.path.join("papers", paper_name + ".pdf")
     print(f"Processing {pdf_path}...")
-    result = extract(pdf_path)
+    # process()/run_batch() stay sync -- batch mode processes one paper at a
+    # time anyway, so there's no concurrency to gain here. asyncio.run()
+    # bridges into the async extract() for just this one call, without
+    # needing to convert the whole batch loop to async.
+    result = asyncio.run(extract(pdf_path))
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
     output_path = os.path.join(RESULTS_DIR, paper_name + "_results.json")
