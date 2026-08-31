@@ -135,7 +135,13 @@ def extract_body_text(pdf_path):
     return " ".join(body_elements)
 
 async def extract(pdf_path):
-    paper_text = extract_body_text(pdf_path)  # sync -- no OpenAI call, just local PDF/OCR work
+    # extract_body_text() is a slow, blocking, synchronous call (layout
+    # model + OCR). Called directly it would block the entire event loop
+    # for its whole duration -- freezing every other request on the server,
+    # not just other extractions. asyncio.to_thread() runs it on a worker
+    # thread instead, and awaiting it properly yields control back to the
+    # event loop while that thread works.
+    paper_text = await asyncio.to_thread(extract_body_text, pdf_path)
 
     # Split on periods, but not a period sandwiched between two digits
     # (e.g. "4.5" or "5.1 Training Data") -- that's a decimal/section
