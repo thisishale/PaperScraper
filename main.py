@@ -9,10 +9,11 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import AsyncOpenAI
 from unstructured.partition.pdf import partition_pdf
 from unstructured.documents.elements import Table
 import unstructured_pytesseract
+import asyncio
 import json
 import argparse
 import re
@@ -43,7 +44,7 @@ torch.set_num_threads(4)
 torch.use_deterministic_algorithms(True, warn_only=True)
 
 load_dotenv("openai.env")
-client = OpenAI()
+client = AsyncOpenAI()
 
 # --num-result picks which results_{num_result}/ directory this run reads
 # from and writes to, so separate runs (e.g. different prompts/models) don't
@@ -52,7 +53,7 @@ client = OpenAI()
 # what this run processes. Default (unset) merges into the existing file --
 # papers not reprocessed this run keep their old row.
 _flag_parser = argparse.ArgumentParser(add_help=False)
-_flag_parser.add_argument("--num-result", type=int, default=5)
+_flag_parser.add_argument("--num-result", type=int, default=6)
 _flag_parser.add_argument("--overwrite-summary", action="store_true")
 _flags = _flag_parser.parse_known_args()[0]
 NUM_RESULT = _flags.num_result
@@ -86,8 +87,8 @@ HYDE_PASSAGES = {
 }
 TOP_K_PER_FIELD = 10  # 4 fields x 10 = up to 40 retrieved chunks (fewer after dedupe overlap)
 
-def embed(texts):
-    response = client.embeddings.create(input=texts, model="text-embedding-3-small")
+async def embed(texts):
+    response = await client.embeddings.create(input=texts, model="text-embedding-3-small")
     return np.array([item.embedding for item in response.data])
 
 MAX_CHUNK_WORDS = 200  # keeps every chunk safely under the 8192-token embedding limit
@@ -133,8 +134,14 @@ def extract_body_text(pdf_path):
     ]
     return " ".join(body_elements)
 
-def extract(pdf_path):
-    paper_text = extract_body_text(pdf_path)
+async def extract(pdf_path):
+    # extract_body_text() is a slow, blocking, synchronous call (layout
+    # model + OCR). Called directly it would block the entire event loop
+    # for its whole duration -- freezing every other request on the server,
+    # not just other extractions. asyncio.to_thread() runs it on a worker
+    # thread instead, and awaiting it properly yields control back to the
+    # event loop while that thread works.
+    paper_text = await asyncio.to_thread(extract_body_text, pdf_path)
 
     # Split on periods, but not a period sandwiched between two digits
     # (e.g. "4.5" or "5.1 Training Data") -- that's a decimal/section
@@ -146,8 +153,8 @@ def extract(pdf_path):
     ]
     chunks = [sub for s in sentences for sub in split_long_chunk(s)]
 
-    chunk_embeddings = embed(chunks)
-    hyde_embeddings = embed(list(HYDE_PASSAGES.values()))
+    chunk_embeddings = await embed(chunks)
+    hyde_embeddings = await embed(list(HYDE_PASSAGES.values()))
 
     # Run retrieval once per field's hypothetical passage, then union the
     # results -- a chunk only needs to win one field's search, not score
@@ -179,7 +186,7 @@ def extract(pdf_path):
         "additionalProperties": False,
     }
 
-    response = client.responses.create(
+    response = await client.responses.create(
         model="gpt-5.4-nano",
         instructions="""
 You extract experimental details from research papers.
@@ -258,7 +265,11 @@ Text:
 def process(paper_name):
     pdf_path = os.path.join("papers", paper_name + ".pdf")
     print(f"Processing {pdf_path}...")
-    result = extract(pdf_path)
+    # process()/run_batch() stay sync -- batch mode processes one paper at a
+    # time anyway, so there's no concurrency to gain here. asyncio.run()
+    # bridges into the async extract() for just this one call, without
+    # needing to convert the whole batch loop to async.
+    result = asyncio.run(extract(pdf_path))
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
     output_path = os.path.join(RESULTS_DIR, paper_name + "_results.json")
@@ -269,34 +280,38 @@ def process(paper_name):
     return result
 
 
-paper_names = [
-    os.path.splitext(f)[0]
-    for f in os.listdir("papers")
-    if f.endswith(".pdf")
-]
+def run_batch():
+    paper_names = [
+        os.path.splitext(f)[0]
+        for f in os.listdir("papers")
+        if f.endswith(".pdf")
+    ]
+
+    new_results = []
+    for name in paper_names:
+        result = process(name)
+        new_results.append({"paper": name, **{k: v["value"] for k, v in result.items()}})
+
+    summary_path = os.path.join(RESULTS_DIR, "summary.json")
+
+    if OVERWRITE_SUMMARY or not os.path.exists(summary_path):
+        existing_results = []
+    else:
+        with open(summary_path) as f:
+            existing_results = json.load(f)
+
+    # Merge by paper name: this run's rows overwrite any old row for the same
+    # paper; papers not reprocessed this run keep their previous row.
+    merged = {row["paper"]: row for row in existing_results}
+    for row in new_results:
+        merged[row["paper"]] = row
+    all_results = [merged[name] for name in sorted(merged)]
+
+    with open(summary_path, "w") as f:
+        json.dump(all_results, f, indent=2)
+
+    print(f"\nSummary saved to {summary_path}")
 
 
-new_results = []
-for name in paper_names:
-    result = process(name)
-    new_results.append({"paper": name, **{k: v["value"] for k, v in result.items()}})
-
-summary_path = os.path.join(RESULTS_DIR, "summary.json")
-
-if OVERWRITE_SUMMARY or not os.path.exists(summary_path):
-    existing_results = []
-else:
-    with open(summary_path) as f:
-        existing_results = json.load(f)
-
-# Merge by paper name: this run's rows overwrite any old row for the same
-# paper; papers not reprocessed this run keep their previous row.
-merged = {row["paper"]: row for row in existing_results}
-for row in new_results:
-    merged[row["paper"]] = row
-all_results = [merged[name] for name in sorted(merged)]
-
-with open(summary_path, "w") as f:
-    json.dump(all_results, f, indent=2)
-
-print(f"\nSummary saved to {summary_path}")
+if __name__ == "__main__":
+    run_batch()
